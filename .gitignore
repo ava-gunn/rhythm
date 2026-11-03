@@ -1,0 +1,4 @@
+.DS_Store
+node_modules/
+# The paper is linked from the README (https://hal.science/hal-04579586) rather than redistributed.
+theory.pdf

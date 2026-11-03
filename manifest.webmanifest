@@ -1,0 +1,23 @@
+{
+  "id": "./",
+  "name": "Good Rhythms",
+  "short_name": "Rhythms",
+  "description": "Explore and generate “good” musical rhythms with k onsets over n pulses, scored with geometric properties from Toussaint’s The Geometry of Musical Rhythm.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f4f0",
+  "theme_color": "#f5f4f0",
+  "categories": ["music", "education"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Generate rhythms", "short_name": "Generate", "url": "./#/generate", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Named rhythms", "short_name": "Library", "url": "./#/library", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
