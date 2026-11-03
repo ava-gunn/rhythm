@@ -101,7 +101,10 @@
             <h3>Playback</h3>
             <p>
               Tempo is in beats per minute. A beat is 4 pulses when n is a multiple of 4 (but not of 3), 3 pulses when n is a
-              multiple of 3, and 2 pulses otherwise. The metronome clicks on each beat and accents pulse 1. On iPhone, the
+              multiple of 3, and 2 pulses otherwise. Behind the rhythm you can have nothing, a metronome that clicks on each beat
+              (accenting pulse 1), or a kick and snare. When the pulses make whole bars of 4/4 (12, 16, 24 or 32 pulses), the
+              kick and snare start on beats 1 and 3 and beats 2 and 4. For any number of pulses you can program your own pattern
+              in the Sound settings; it is saved for that number of pulses. On iPhone, the
               ring/silent switch may mute sound in older iOS versions.
             </p>
 
@@ -165,13 +168,12 @@
           <input type="range" id="highcut" min="0" max="24" step="1" aria-label="High-frequency cut in decibels" />
           <span class="muted small">Turns down everything above about 2.5 kHz, for a less piercing sound</span>
         </label>
-        <label class="switch-row">
-          <span>
-            <span class="field-label">Metronome</span>
-            <span class="muted small">Click on every beat, accent on pulse 1</span>
-          </span>
-          <input type="checkbox" class="switch" id="metronome" />
-        </label>
+        <fieldset class="field">
+          <legend class="field-label">Backing</legend>
+          <div class="seg" id="backing-seg" role="radiogroup" aria-label="Backing"></div>
+          <p class="muted small backing-note" id="backing-note"></p>
+        </fieldset>
+        <div class="seq" id="drum-seq" hidden></div>
       </form>
     </dialog>
 

@@ -1,4 +1,16 @@
-import { Player, SOUNDS, BPM_MIN, BPM_MAX, HIGH_CUT_MAX, rhythmKey, pulsesPerBeat } from './audio.js';
+import {
+  Player,
+  SOUNDS,
+  BACKINGS,
+  BPM_MIN,
+  BPM_MAX,
+  HIGH_CUT_MAX,
+  rhythmKey,
+  pulsesPerBeat,
+  fourFourBars,
+  defaultDrumPattern,
+  drumPattern,
+} from './audio.js';
 import { Engine } from './engine.js';
 import { NAMED, GROUPS, namedSpaces } from './named.js';
 import { PROPERTIES, countRhythms, rotateToOnset, necklaceKey, durations, euclidean } from './rhythm.js';
@@ -802,6 +814,14 @@ function frame() {
         lit.push(cell);
       }
     }
+    // Follow playback in the drum sequencer when it shows the same pulse count.
+    const grid = $('drum-seq').querySelector('.seq-grid');
+    if (grid && dialog.open && +grid.dataset.n === player.current.n && pos.pulse >= 0) {
+      for (const el of grid.querySelectorAll(`[data-i="${pos.pulse}"]`)) {
+        el.classList.add('now');
+        lit.push(el);
+      }
+    }
   }
   const deg = (pos.phase * 360).toFixed(2);
   for (const hand of hands) hand.setAttribute('transform', `rotate(${deg} 50 50)`);
@@ -856,13 +876,15 @@ document.addEventListener('keydown', (e) => {
 const dialog = $('settings');
 
 function openSettings() {
+  // Program the drums for the rhythm that is loaded, if any.
+  if (player.current) seq.n = player.current.n;
   updateSettingsUI();
   if (typeof dialog.showModal === 'function') dialog.showModal();
   else dialog.setAttribute('open', '');
 }
 
 function updateSettingsUI() {
-  const { bpm, sound, metronome, highCut } = player.settings;
+  const { bpm, sound, backing, highCut } = player.settings;
   const range = $('bpm');
   if (document.activeElement !== range) range.value = bpm;
   if (document.activeElement !== $('highcut')) $('highcut').value = highCut;
@@ -870,7 +892,11 @@ function updateSettingsUI() {
   $('bpm-out').textContent = `${bpm} BPM`;
   $('bpm-down').disabled = bpm <= BPM_MIN;
   $('bpm-up').disabled = bpm >= BPM_MAX;
-  $('metronome').checked = metronome;
+  $('backing-seg')
+    .querySelectorAll('button')
+    .forEach((b) => b.setAttribute('aria-checked', String(b.dataset.backing === backing)));
+  $('backing-note').textContent = BACKING_NOTES[backing];
+  renderSequencer();
   $('sound-seg')
     .querySelectorAll('button')
     .forEach((b) => b.setAttribute('aria-checked', String(b.dataset.sound === sound)));
@@ -880,10 +906,121 @@ function updateSettingsUI() {
 
 const highCutLabel = (db) => (db === 0 ? 'Off' : `−${db} dB`);
 
+const BACKING_NOTES = {
+  off: 'Just the rhythm.',
+  metronome: 'Clicks on every beat, with an accent on pulse 1.',
+  drums: 'A kick and snare pattern, which you can program for each number of pulses.',
+};
+
 function tempoLabel() {
-  const { bpm, sound, metronome } = player.settings;
+  const { bpm, sound, backing } = player.settings;
   const name = SOUNDS.find((x) => x.id === sound)?.label ?? sound;
-  return `${bpm} BPM · ${name}${metronome ? ' + metronome' : ''}`;
+  const extra = { off: '', metronome: ' + metronome', drums: ' + kick & snare' }[backing];
+  return `${bpm} BPM · ${name}${extra}`;
+}
+
+// ---------------------------------------------------------------------------
+// Kick & snare sequencer: one row per drum, one cell per pulse, wrapped into
+// lines of whole beats (at most 8 pulses) so cells stay big enough to tap.
+
+const DRUMS = [
+  { id: 'kick', label: 'Kick' },
+  { id: 'snare', label: 'Snare' },
+];
+const seq = { n: 16, builtFor: null };
+
+function renderSequencer() {
+  const root = $('drum-seq');
+  root.hidden = player.settings.backing !== 'drums';
+  if (root.hidden) return;
+  if (seq.builtFor !== seq.n) buildSequencer(root);
+  syncSequencer(root);
+}
+
+function buildSequencer(root) {
+  const n = seq.n;
+  const g = pulsesPerBeat(n);
+  const perLine = n <= 8 ? n : g * Math.floor(8 / g);
+  const grid = h('div', { class: 'seq-grid', dataset: { n } });
+  for (let from = 0; from < n; from += perLine) {
+    const cols = Math.min(perLine, n - from);
+    const line = h('div', { class: 'seq-line', style: { '--cols': perLine } });
+    line.append(h('span', { class: 'seq-label', 'aria-hidden': 'true' }));
+    for (let i = from; i < from + cols; i++) {
+      line.append(h('span', { class: `seq-num${i % g === 0 ? ' beat' : ''}`, 'aria-hidden': 'true', 'data-i': i, text: pulseLabel(i) }));
+    }
+    for (const drum of DRUMS) {
+      line.append(h('span', { class: 'seq-label', text: drum.label }));
+      for (let i = from; i < from + cols; i++) {
+        line.append(
+          h('button', {
+            type: 'button',
+            class: `seq-cell ${drum.id}${i % g === 0 ? ' beat' : ''}`,
+            'aria-label': `${drum.label} on pulse ${pulseLabel(i)}`,
+            'aria-pressed': 'false',
+            'data-i': i,
+            dataset: { drum: drum.id },
+            onclick: () => toggleDrum(drum.id, i),
+          }),
+        );
+      }
+    }
+    grid.append(line);
+  }
+
+  const stepN = (d) => {
+    seq.n = Math.max(3, Math.min(MAX_N, seq.n + d));
+    renderSequencer();
+  };
+  root.replaceChildren(
+    h(
+      'div',
+      { class: 'seq-head' },
+      h('span', { class: 'field-label', text: 'Pattern for' }),
+      h(
+        'div',
+        { class: 'seq-n' },
+        h('button', { type: 'button', class: 'round-btn small', 'aria-label': 'Fewer pulses', text: '−', disabled: n <= 3, onclick: () => stepN(-1) }),
+        h('output', { 'aria-live': 'polite', text: `${n} pulses` }),
+        h('button', { type: 'button', class: 'round-btn small', 'aria-label': 'More pulses', text: '+', disabled: n >= MAX_N, onclick: () => stepN(1) }),
+      ),
+    ),
+    h('p', { class: 'muted small seq-note' }),
+    grid,
+    h(
+      'div',
+      { class: 'seq-actions' },
+      h('button', { type: 'button', class: 'chip seq-reset', text: 'Reset to default', onclick: () => player.setDrumPattern(seq.n, defaultDrumPattern(seq.n)) }),
+      h('button', { type: 'button', class: 'chip', text: 'Clear', onclick: () => player.setDrumPattern(seq.n, { kick: [], snare: [] }) }),
+    ),
+  );
+  seq.builtFor = n;
+}
+
+function syncSequencer(root) {
+  const n = seq.n;
+  const pattern = drumPattern(n, player.settings);
+  const on = { kick: new Set(pattern.kick), snare: new Set(pattern.snare) };
+  root.querySelectorAll('.seq-cell').forEach((cell) => {
+    cell.setAttribute('aria-pressed', String(on[cell.dataset.drum].has(+cell.dataset.i)));
+  });
+  const custom = Boolean(player.settings.drums[n]);
+  const bars = fourFourBars(n);
+  const g = pulsesPerBeat(n);
+  root.querySelector('.seq-note').textContent = custom
+    ? `Your own pattern for ${n} pulses. It plays with every rhythm that has ${n} pulses.`
+    : bars
+      ? `${n} pulses make ${bars === 1 ? 'a bar' : `${bars} bars`} of 4/4 (${g} pulses per beat): kick on beats 1 and 3, snare on 2 and 4. Tap the cells to change it.`
+      : `${n} pulses don’t make whole bars of 4/4, so this starts as a kick on pulse 1. Tap the cells to program a pattern.`;
+  root.querySelector('.seq-reset').disabled = !custom;
+}
+
+function toggleDrum(drum, i) {
+  const pattern = drumPattern(seq.n, player.settings);
+  const set = new Set(pattern[drum]);
+  if (set.has(i)) set.delete(i);
+  else set.add(i);
+  player.setDrumPattern(seq.n, { ...pattern, [drum]: [...set] });
 }
 
 function initSettings() {
@@ -911,7 +1048,17 @@ function initSettings() {
   $('bpm').max = BPM_MAX;
   $('bpm-down').addEventListener('click', () => player.update({ bpm: player.settings.bpm - 1 }));
   $('bpm-up').addEventListener('click', () => player.update({ bpm: player.settings.bpm + 1 }));
-  $('metronome').addEventListener('change', (e) => player.update({ metronome: e.target.checked }));
+  $('backing-seg').append(
+    ...BACKINGS.map((b) =>
+      h('button', {
+        type: 'button',
+        role: 'radio',
+        dataset: { backing: b.id },
+        text: b.label,
+        onclick: () => player.update({ backing: b.id }),
+      }),
+    ),
+  );
   $('highcut').max = HIGH_CUT_MAX;
   $('highcut').addEventListener('input', (e) => {
     $('highcut-out').textContent = highCutLabel(+e.target.value);

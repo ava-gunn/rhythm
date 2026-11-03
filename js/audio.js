@@ -9,8 +9,17 @@ export const SOUNDS = [
   { id: 'beep', label: 'Beep' },
 ];
 
+/** What plays behind the rhythm. */
+export const BACKINGS = [
+  { id: 'off', label: 'Off' },
+  { id: 'metronome', label: 'Metronome' },
+  { id: 'drums', label: 'Kick & snare' },
+];
+
 const SETTINGS_KEY = 'good-rhythms.audio';
-const DEFAULTS = { bpm: 100, sound: 'clave', metronome: true, highCut: 9 };
+// `drums` maps a pulse count n to a custom { kick, snare } pattern (0-based
+// pulses); counts without an entry use defaultDrumPattern(n).
+const DEFAULTS = { bpm: 100, sound: 'clave', backing: 'metronome', drums: {}, highCut: 9 };
 export const BPM_MIN = 40;
 export const BPM_MAX = 220;
 /** High-shelf filter that softens the highs: corner frequency and the cut range in dB. */
@@ -25,6 +34,41 @@ export function pulsesPerBeat(n) {
   if (n % 4 === 0 && n % 3 !== 0) return 4;
   if (n % 3 === 0) return 3;
   return 2;
+}
+
+/** Number of whole 4/4 bars (4 beats of pulsesPerBeat(n)) in n pulses; 0 if it is not 4/4. */
+export function fourFourBars(n) {
+  const g = pulsesPerBeat(n);
+  if (n % g !== 0) return 0;
+  const beats = n / g;
+  return beats % 4 === 0 ? beats / 4 : 0;
+}
+
+/**
+ * The pattern used until one is programmed for n pulses: in 4/4, kick on
+ * beats 1 and 3 and snare on beats 2 and 4 of every bar; otherwise just a
+ * kick on the first pulse, as an anchor to program from.
+ */
+export function defaultDrumPattern(n) {
+  const kick = [];
+  const snare = [];
+  if (fourFourBars(n)) {
+    const g = pulsesPerBeat(n);
+    for (let beat = 0; beat < n / g; beat++) (beat % 2 === 0 ? kick : snare).push(beat * g);
+  } else {
+    kick.push(0);
+  }
+  return { kick, snare };
+}
+
+/** The kick and snare pattern in effect for n pulses. */
+export function drumPattern(n, settings) {
+  return settings.drums?.[n] ?? defaultDrumPattern(n);
+}
+
+export function sameDrumPattern(a, b) {
+  const same = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);
+  return same(a.kick, b.kick) && same(a.snare, b.snare);
 }
 
 export const rhythmKey = (r) => `${r.n}:${r.onsets.join('.')}`;
@@ -145,6 +189,17 @@ export class Player extends EventTarget {
     this.emit();
   }
 
+  /** Program the kick and snare pattern for n pulses (0-based pulses). */
+  setDrumPattern(n, pattern) {
+    const clean = (list) => [...new Set(list)].filter((v) => Number.isInteger(v) && v >= 0 && v < n).sort((a, b) => a - b);
+    const next = { kick: clean(pattern.kick), snare: clean(pattern.snare) };
+    const drums = { ...this.settings.drums };
+    // Store only patterns that differ from the default.
+    if (sameDrumPattern(next, defaultDrumPattern(n))) delete drums[n];
+    else drums[n] = next;
+    this.update({ drums });
+  }
+
   /** Re-render the loop buffer and swap it in. `mode`: zero | keep | pulse */
   restart(mode) {
     const ctx = this.ctx;
@@ -210,7 +265,16 @@ function readSettings() {
     const out = {};
     if (Number.isFinite(s.bpm)) out.bpm = s.bpm;
     if (SOUNDS.some((x) => x.id === s.sound)) out.sound = s.sound;
-    if (typeof s.metronome === 'boolean') out.metronome = s.metronome;
+    if (BACKINGS.some((b) => b.id === s.backing)) out.backing = s.backing;
+    if (s.drums && typeof s.drums === 'object') {
+      out.drums = {};
+      for (const [key, p] of Object.entries(s.drums)) {
+        const n = Number(key);
+        if (!Number.isInteger(n) || n < 3 || n > 64 || !p) continue;
+        const clean = (list) => (Array.isArray(list) ? list.filter((v) => Number.isInteger(v) && v >= 0 && v < n) : []);
+        out.drums[n] = { kick: clean(p.kick), snare: clean(p.snare) };
+      }
+    }
     if (Number.isFinite(s.highCut)) out.highCut = s.highCut;
     return out;
   } catch {
@@ -222,15 +286,20 @@ function readSettings() {
 // Synthesis. Everything is added into a circular buffer so the tails of the
 // last notes wrap into the start and the loop is seamless.
 
-function renderLoop(ctx, onsets, n, pulseDur, g, settings) {
+export function renderLoop(ctx, onsets, n, pulseDur, g, settings) {
   const sr = ctx.sampleRate;
   const length = Math.max(1, Math.round(n * pulseDur * sr));
   const data = new Float32Array(length);
   const voice = VOICES[settings.sound] || VOICES.clave;
   const onsetSet = new Set(onsets);
+  const drums = settings.backing === 'drums' ? drumPattern(n, settings) : null;
+  const kicks = new Set(drums?.kick);
+  const snares = new Set(drums?.snare);
   for (let p = 0; p < n; p++) {
     const start = Math.round(p * pulseDur * sr);
-    if (settings.metronome && p % g === 0) tick(data, start, sr, p === 0 ? 0.3 : 0.16);
+    if (settings.backing === 'metronome' && p % g === 0) tick(data, start, sr, p === 0 ? 0.3 : 0.16);
+    if (kicks.has(p)) kick(data, start, sr);
+    if (snares.has(p)) snare(data, start, sr);
     if (onsetSet.has(p)) voice(data, start, sr, p === 0 ? 1 : 0.8);
   }
   // Keep the peak below 0 dBFS.
@@ -291,6 +360,24 @@ function addNoise(data, start, sr, { dur, amp, decay, hp = 0.85, seed = 7 }) {
 
 function tick(data, start, sr, amp) {
   addNoise(data, start, sr, { dur: 0.05, amp, decay: 0.01, hp: 0.9 });
+}
+
+// Backing drums: a low sine kick with a fast pitch drop and a beater click,
+// and a snare of short tonal body plus a longer noise burst.
+function kick(data, start, sr) {
+  addTone(data, start, sr, { dur: 0.5, amp: 0.75, decay: 0.15, attack: 0.0015, sweep: (t) => 50 + 100 * Math.exp(-t / 0.035) });
+  addNoise(data, start, sr, { dur: 0.006, amp: 0.1, decay: 0.0015, seed: 31 });
+}
+
+function snare(data, start, sr) {
+  addTone(data, start, sr, {
+    dur: 0.2,
+    amp: 0.22,
+    decay: 0.045,
+    sweep: (t) => 185 + 70 * Math.exp(-t / 0.012),
+    partials: [[1, 1], [1.62, 0.5]],
+  });
+  addNoise(data, start, sr, { dur: 0.3, amp: 0.32, decay: 0.075, hp: 0.7, seed: 101 });
 }
 
 const VOICES = {
