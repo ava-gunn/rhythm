@@ -10,9 +10,12 @@ export const SOUNDS = [
 ];
 
 const SETTINGS_KEY = 'good-rhythms.audio';
-const DEFAULTS = { bpm: 100, sound: 'clave', metronome: true };
+const DEFAULTS = { bpm: 100, sound: 'clave', metronome: true, highCut: 9 };
 export const BPM_MIN = 40;
 export const BPM_MAX = 220;
+/** High-shelf filter that softens the highs: corner frequency and the cut range in dB. */
+export const SHELF_HZ = 2500;
+export const HIGH_CUT_MAX = 24;
 
 /**
  * Pulses per beat used for the tempo and the metronome: 16-pulse rhythms are
@@ -58,8 +61,14 @@ export class Player extends EventTarget {
       }
       const AC = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AC({ latencyHint: 'interactive' });
+      // Signal chain: loop source → high shelf → master gain → speakers.
+      this.shelf = this.ctx.createBiquadFilter();
+      this.shelf.type = 'highshelf';
+      this.shelf.frequency.value = SHELF_HZ;
+      this.shelf.gain.value = -this.settings.highCut;
       this.master = this.ctx.createGain();
       this.master.gain.value = 0.9;
+      this.shelf.connect(this.master);
       this.master.connect(this.ctx.destination);
       this.ctx.addEventListener('statechange', () => {
         if (this.ctx.state !== 'running' && this.playing) this.emit();
@@ -121,12 +130,18 @@ export class Player extends EventTarget {
   update(patch) {
     Object.assign(this.settings, patch);
     this.settings.bpm = Math.max(BPM_MIN, Math.min(BPM_MAX, Math.round(this.settings.bpm)));
+    this.settings.highCut = Math.max(0, Math.min(HIGH_CUT_MAX, Math.round(this.settings.highCut)));
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings));
     } catch {
       /* private mode */
     }
-    if (this.playing) this.restart('keep');
+    if (this.shelf) {
+      // A filter change needs no re-render; glide to avoid zipper noise.
+      this.shelf.gain.setTargetAtTime(-this.settings.highCut, this.ctx.currentTime, 0.02);
+    }
+    const needsRender = Object.keys(patch).some((key) => key !== 'highCut');
+    if (this.playing && needsRender) this.restart('keep');
     this.emit();
   }
 
@@ -159,7 +174,7 @@ export class Player extends EventTarget {
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
     src.loop = true;
-    src.connect(this.master);
+    src.connect(this.shelf);
     src.start(when, offset);
     if (this.source) {
       try {
@@ -196,6 +211,7 @@ function readSettings() {
     if (Number.isFinite(s.bpm)) out.bpm = s.bpm;
     if (SOUNDS.some((x) => x.id === s.sound)) out.sound = s.sound;
     if (typeof s.metronome === 'boolean') out.metronome = s.metronome;
+    if (Number.isFinite(s.highCut)) out.highCut = s.highCut;
     return out;
   } catch {
     return {};

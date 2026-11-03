@@ -10,7 +10,8 @@ Out in The Geometry of Musical Rhythm* (MCM 2024, [hal-04579586](https://hal.sci
   and lists the best or worst. It can show one rotation per necklace, and it shows the score distribution.
 - **Detail**: polygon and box notation, a live playhead, rotation, the score, rank and percentile, a breakdown of all
   12 properties (raw value, normalization range and formula), and notes from the paper.
-- **Audio**: synthesized clave, woodblock, drum or beep, with an optional metronome. Tempo is in BPM.
+- **Audio**: synthesized clave, woodblock, drum or beep, with an optional metronome and a "Soften highs" high-shelf
+  filter (2.5 kHz, 0–24 dB cut, default 9 dB). Tempo is in BPM.
 - **Mobile**: thumb-reachable tab and player bars, safe-area insets, light and dark themes, works offline, and can be
   installed on Android (install prompt) and iOS (Share → Add to Home Screen).
 

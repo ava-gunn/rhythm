@@ -160,6 +160,11 @@
           <legend class="field-label">Instrument</legend>
           <div class="seg" id="sound-seg" role="radiogroup" aria-label="Instrument"></div>
         </fieldset>
+        <label class="field">
+          <span class="field-label">Soften highs <output id="highcut-out"></output></span>
+          <input type="range" id="highcut" min="0" max="24" step="1" aria-label="High-frequency cut in decibels" />
+          <span class="muted small">Turns down everything above about 2.5 kHz, for a less piercing sound</span>
+        </label>
         <label class="switch-row">
           <span>
             <span class="field-label">Metronome</span>

@@ -1,4 +1,4 @@
-import { Player, SOUNDS, BPM_MIN, BPM_MAX, rhythmKey, pulsesPerBeat } from './audio.js';
+import { Player, SOUNDS, BPM_MIN, BPM_MAX, HIGH_CUT_MAX, rhythmKey, pulsesPerBeat } from './audio.js';
 import { Engine } from './engine.js';
 import { NAMED, GROUPS, namedSpaces } from './named.js';
 import { PROPERTIES, countRhythms, rotateToOnset, necklaceKey, durations, euclidean } from './rhythm.js';
@@ -862,9 +862,11 @@ function openSettings() {
 }
 
 function updateSettingsUI() {
-  const { bpm, sound, metronome } = player.settings;
+  const { bpm, sound, metronome, highCut } = player.settings;
   const range = $('bpm');
   if (document.activeElement !== range) range.value = bpm;
+  if (document.activeElement !== $('highcut')) $('highcut').value = highCut;
+  $('highcut-out').textContent = highCutLabel(highCut);
   $('bpm-out').textContent = `${bpm} BPM`;
   $('bpm-down').disabled = bpm <= BPM_MIN;
   $('bpm-up').disabled = bpm >= BPM_MAX;
@@ -875,6 +877,8 @@ function updateSettingsUI() {
   if (player.current) $('pb-tempo').textContent = `${bpm} BPM`;
   document.querySelectorAll('.tempo-chip').forEach((b) => (b.textContent = tempoLabel()));
 }
+
+const highCutLabel = (db) => (db === 0 ? 'Off' : `−${db} dB`);
 
 function tempoLabel() {
   const { bpm, sound, metronome } = player.settings;
@@ -908,6 +912,11 @@ function initSettings() {
   $('bpm-down').addEventListener('click', () => player.update({ bpm: player.settings.bpm - 1 }));
   $('bpm-up').addEventListener('click', () => player.update({ bpm: player.settings.bpm + 1 }));
   $('metronome').addEventListener('change', (e) => player.update({ metronome: e.target.checked }));
+  $('highcut').max = HIGH_CUT_MAX;
+  $('highcut').addEventListener('input', (e) => {
+    $('highcut-out').textContent = highCutLabel(+e.target.value);
+    player.update({ highCut: +e.target.value });
+  });
   // Tap outside the sheet to close.
   dialog.addEventListener('click', (e) => {
     if (e.target === dialog) dialog.close();

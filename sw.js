@@ -2,7 +2,7 @@
 // Bump VERSION whenever any precached file changes; open tabs are offered a
 // reload once the new version has installed.
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `good-rhythms-${VERSION}`;
 const ASSETS = [
   './',
