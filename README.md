@@ -10,8 +10,8 @@ Out in The Geometry of Musical Rhythm* (MCM 2024, [hal-04579586](https://hal.sci
   and lists the best or worst. It can show one rotation per necklace, and it shows the score distribution.
 - **Detail**: polygon and box notation, a live playhead, rotation, the score, rank and percentile, a breakdown of all
   12 properties (raw value, normalization range and formula), and notes from the paper.
-- **Audio**: synthesized clave, woodblock, drum or beep, with a "Soften highs" high-shelf filter (2.5 kHz, 0–24 dB
-  cut, default 9 dB). Tempo is in BPM. The backing can be off, a metronome, or a **kick and snare**. Pulse counts
+- **Audio**: synthesized clave, woodblock, drum or beep. A "Soften highs" high-shelf filter (2.5 kHz, 0–24 dB cut,
+  default 9 dB) applies to the rhythm's instrument only, not the backing. Tempo is in BPM. The backing can be off, a metronome, or a **kick and snare**. Pulse counts
   that make whole 4/4 bars on the beat grid (12, 16, 24, 32) start as kick on beats 1 and 3 and snare on 2 and 4.
   Any other count starts with a single kick on pulse 1. A step sequencer in the Sound settings programs the pattern
   for any number of pulses, and patterns are saved per pulse count.

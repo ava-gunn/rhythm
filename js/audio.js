@@ -78,7 +78,7 @@ export class Player extends EventTarget {
     super();
     this.ctx = null;
     this.master = null;
-    this.source = null;
+    this.sources = []; // looping sources: the rhythm's tones, and the backing if any
     this.current = null; // { onsets, n, title, subtitle, href }
     this.playing = false;
     this.t0 = 0; // context time at which the current loop's phase was 0
@@ -105,7 +105,8 @@ export class Player extends EventTarget {
       }
       const AC = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AC({ latencyHint: 'interactive' });
-      // Signal chain: loop source → high shelf → master gain → speakers.
+      // Signal chain: rhythm tones → high shelf → master gain → speakers;
+      // the backing (metronome or drums) goes straight to the master gain.
       this.shelf = this.ctx.createBiquadFilter();
       this.shelf.type = 'highshelf';
       this.shelf.frequency.value = SHELF_HZ;
@@ -158,15 +159,15 @@ export class Player extends EventTarget {
   }
 
   stop() {
-    if (this.source) {
+    for (const src of this.sources) {
       try {
-        this.source.stop();
+        src.stop();
       } catch {
         /* already stopped */
       }
-      this.source.disconnect();
-      this.source = null;
+      src.disconnect();
     }
+    this.sources = [];
     this.playing = false;
     this.emit();
   }
@@ -200,18 +201,18 @@ export class Player extends EventTarget {
     this.update({ drums });
   }
 
-  /** Re-render the loop buffer and swap it in. `mode`: zero | keep | pulse */
+  /** Re-render the loop buffers and swap them in. `mode`: zero | keep | pulse */
   restart(mode) {
     const ctx = this.ctx;
     const { onsets, n } = this.current;
     const g = pulsesPerBeat(n);
     const pulseDur = 60 / (this.settings.bpm * g);
     const cycle = pulseDur * n;
-    const buffer = renderLoop(ctx, onsets, n, pulseDur, g, this.settings);
+    const buffers = renderLoop(ctx, onsets, n, pulseDur, g, this.settings);
 
     const when = ctx.currentTime + 0.03;
     let phase = 0;
-    if (this.source && mode !== 'zero') {
+    if (this.sources.length && mode !== 'zero') {
       const old = (((when - this.t0) / this.cycle) % 1 + 1) % 1;
       if (mode === 'keep') phase = old;
       else {
@@ -219,26 +220,34 @@ export class Player extends EventTarget {
         const oldPulseDur = this.cycle / (this.oldN || n);
         const into = (when - this.t0) % oldPulseDur;
         const wait = into < 1e-4 ? 0 : oldPulseDur - into;
-        return this.swap(buffer, when + wait, 0, cycle);
+        return this.swap(buffers, when + wait, 0, cycle);
       }
     }
-    this.swap(buffer, when, phase * cycle, cycle);
+    this.swap(buffers, when, phase * cycle, cycle);
   }
 
-  swap(buffer, when, offset, cycle) {
-    const src = this.ctx.createBufferSource();
-    src.buffer = buffer;
-    src.loop = true;
-    src.connect(this.shelf);
-    src.start(when, offset);
-    if (this.source) {
+  swap({ tones, backing }, when, offset, cycle) {
+    // Both parts have the same length and start at the same moment, so they
+    // stay sample-locked. Only the rhythm's tones go through the high shelf.
+    const loop = (buffer, destination) => {
+      const src = this.ctx.createBufferSource();
+      src.buffer = buffer;
+      src.loop = true;
+      src.connect(destination);
+      src.start(when, offset);
+      return src;
+    };
+    const next = [loop(tones, this.shelf)];
+    if (backing) next.push(loop(backing, this.master));
+    for (const src of this.sources) {
+      src.onended = () => src.disconnect();
       try {
-        this.source.stop(when);
+        src.stop(when);
       } catch {
         /* ignore */
       }
     }
-    this.source = src;
+    this.sources = next;
     this.t0 = when - offset;
     this.cycle = cycle;
     this.oldN = this.current.n;
@@ -283,13 +292,19 @@ function readSettings() {
 }
 
 // ---------------------------------------------------------------------------
-// Synthesis. Everything is added into a circular buffer so the tails of the
+// Synthesis. Everything is added into circular buffers so the tails of the
 // last notes wrap into the start and the loop is seamless.
 
+/**
+ * Render one cycle as two loops of equal length: `tones` (the rhythm's
+ * instrument, which the high shelf softens) and `backing` (metronome or kick &
+ * snare, left unfiltered; null when the backing is off).
+ */
 export function renderLoop(ctx, onsets, n, pulseDur, g, settings) {
   const sr = ctx.sampleRate;
   const length = Math.max(1, Math.round(n * pulseDur * sr));
-  const data = new Float32Array(length);
+  const tones = new Float32Array(length);
+  const backing = settings.backing === 'off' ? null : new Float32Array(length);
   const voice = VOICES[settings.sound] || VOICES.clave;
   const onsetSet = new Set(onsets);
   const drums = settings.backing === 'drums' ? drumPattern(n, settings) : null;
@@ -297,21 +312,27 @@ export function renderLoop(ctx, onsets, n, pulseDur, g, settings) {
   const snares = new Set(drums?.snare);
   for (let p = 0; p < n; p++) {
     const start = Math.round(p * pulseDur * sr);
-    if (settings.backing === 'metronome' && p % g === 0) tick(data, start, sr, p === 0 ? 0.3 : 0.16);
-    if (kicks.has(p)) kick(data, start, sr);
-    if (snares.has(p)) snare(data, start, sr);
-    if (onsetSet.has(p)) voice(data, start, sr, p === 0 ? 1 : 0.8);
+    if (settings.backing === 'metronome' && p % g === 0) tick(backing, start, sr, p === 0 ? 0.3 : 0.16);
+    if (kicks.has(p)) kick(backing, start, sr);
+    if (snares.has(p)) snare(backing, start, sr);
+    if (onsetSet.has(p)) voice(tones, start, sr, p === 0 ? 1 : 0.8);
   }
-  // Keep the peak below 0 dBFS.
+  // Keep the combined peak below 0 dBFS, scaling both parts alike to keep their balance.
   let peak = 0;
-  for (let i = 0; i < length; i++) peak = Math.max(peak, Math.abs(data[i]));
+  for (let i = 0; i < length; i++) peak = Math.max(peak, Math.abs(tones[i] + (backing ? backing[i] : 0)));
   if (peak > 0.95) {
     const s = 0.95 / peak;
-    for (let i = 0; i < length; i++) data[i] *= s;
+    for (let i = 0; i < length; i++) {
+      tones[i] *= s;
+      if (backing) backing[i] *= s;
+    }
   }
-  const buffer = ctx.createBuffer(1, length, sr);
-  buffer.getChannelData(0).set(data);
-  return buffer;
+  const toBuffer = (data) => {
+    const buffer = ctx.createBuffer(1, length, sr);
+    buffer.getChannelData(0).set(data);
+    return buffer;
+  };
+  return { tones: toBuffer(tones), backing: backing && toBuffer(backing) };
 }
 
 function addTone(data, start, sr, { dur, amp, freq, decay, attack = 0.001, partials = [[1, 1]], sweep = null }) {
